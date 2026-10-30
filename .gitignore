@@ -1,0 +1,12 @@
+backend/venv/
+backend/__pycache__/
+backend/.env
+backend/.pytest_cache/
+backend/alembic/versions/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+dist/
+build/
+.vscode/

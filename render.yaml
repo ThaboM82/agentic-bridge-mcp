@@ -1,0 +1,23 @@
+﻿services:
+  - type: web
+    name: agentic-bridge-backend
+    env: python
+    region: frankfurt
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agentic-bridge-db
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+
+databases:
+  - name: agentic-bridge-db
+    databaseName: agentic_bridge
+    user: agentic_user
+    plan: free
+    region: frankfurt

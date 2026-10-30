@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-background: #020617;
+    --color-surface: #0f172a;
+    --color-border: #1e293b;
+    --color-primary: #6366f1;
+    --color-accent: #38bdf8;
+  }
+
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased font-sans selection:bg-indigo-500 selection:text-white;
+    background-color: var(--color-background);
+    color: #f1f5f9;
+    overflow-x: hidden;
+  }
+
+  * {
+    border-color: var(--color-border);
+  }
+}
+
+@layer components {
+  /* Glassmorphism panel containers */
+  .glass-panel {
+    @apply bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-2xl;
+  }
+  
+  /* Interactive card component with smooth hover states */
+  .glass-card {
+    @apply bg-slate-900/50 backdrop-blur-md border border-slate-800/60 rounded-xl transition-all duration-300 hover:border-slate-700 hover:bg-slate-900/80;
+  }
+
+  /* Primary enterprise action button */
+  .btn-primary {
+    @apply bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2.5 rounded-lg transition-all duration-200 shadow-lg shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2;
+  }
+
+  /* Enterprise text inputs and textareas */
+  .input-enterprise {
+    @apply w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm transition-all;
+  }
+
+  /* Semantic Status Indicator Badges */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-mono font-medium border shadow-sm;
+  }
+
+  .badge-emerald {
+    @apply bg-emerald-500/10 text-emerald-400 border-emerald-500/20;
+  }
+
+  .badge-indigo {
+    @apply bg-indigo-500/10 text-indigo-400 border-indigo-500/20;
+  }
+
+  .badge-amber {
+    @apply bg-amber-500/10 text-amber-400 border-amber-500/20;
+  }
+
+  .badge-rose {
+    @apply bg-rose-500/10 text-rose-400 border-rose-500/20;
+  }
+
+  .badge-sky {
+    @apply bg-sky-500/10 text-sky-400 border-sky-500/20;
+  }
+}
+
+@layer utilities {
+  /* Multi-color gradient heading text */
+  .text-gradient {
+    @apply bg-gradient-to-r from-indigo-400 via-sky-400 to-emerald-400 bg-clip-text text-transparent;
+  }
+  
+  /* Ambient glowing box shadows */
+  .glow-indigo {
+    box-shadow: 0 0 30px -5px rgba(99, 102, 241, 0.3);
+  }
+
+  .glow-emerald {
+    box-shadow: 0 0 30px -5px rgba(16, 185, 129, 0.3);
+  }
+}
+
+/* Custom scanline animation for active agent processing states */
+@keyframes scanline {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 0.6; }
+  100% { transform: translateY(1000%); opacity: 0; }
+}
+
+.animate-scanline {
+  animation: scanline 4s linear infinite;
+}
+
+/* Advanced pulsating glow for live status dots */
+@keyframes pulseGlow {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+    box-shadow: 0 0 0 6px rgba(56, 189, 248, 0);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom sleek dark scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #060913;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
