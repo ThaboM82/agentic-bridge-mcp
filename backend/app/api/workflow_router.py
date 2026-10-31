@@ -99,9 +99,9 @@ async def execution_node(state: AgentWorkflowState) -> Dict[str, Any]:
     return {
         "raw_output": output_text,
         "current_step": "critique",
-        "execution_logs": [f"[{time.strftime('%H:%M:%S']}] Execution Node: Successfully generated primary response via GPT-4o-mini."]
+       # Correct
+"execution_logs": [f"[{time.strftime('%H:%M:%S')}] Execution Node: Successfully generated primary response via GPT-4o-mini."]
     }
-
 
 async def critique_and_refine_node(state: AgentWorkflowState) -> Dict[str, Any]:
     """Phase 3: Evaluates output quality and finalizes the refined enterprise response."""
