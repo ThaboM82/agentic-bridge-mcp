@@ -1,138 +1,298 @@
+"""
+LangGraph requirements-extraction node.
+
+Extracts structured, actionable requirements from the normalized source brief
+using the configured language-model provider. Output is strictly validated
+before it enters workflow state.
+
+Responsibilities:
+- Validate and bound the ingestion brief.
+- Build a versioned, sanitized requirements-extraction prompt.
+- Invoke the configured language-model provider asynchronously.
+- Validate structured model output.
+- Record requirements, confidence, prompt version, and provider telemetry.
+- Map provider and validation failures to recoverable workflow errors.
+
+Non-goals:
+- Do not retrieve vector context, generate code, enforce approval policy,
+  publish artifacts, or implement retry/backoff policy in this node.
+"""
+
+from __future__ import annotations
+
 import logging
-import time
-from typing import Dict, Any, List
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
+from typing import Any, Literal
+
 from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field, field_validator
+
+from app.core.constants import MAX_SEARCH_QUERY_LENGTH
+from app.core.enums import WorkflowStep
+from app.core.exceptions import (
+    ExternalProviderError,
+    ProviderTimeoutError,
+    ValidationError,
+    WorkflowStateError,
+)
+from app.core.logging_context import bind_workflow_context
+from app.core.utils import truncate_text
+from app.graph.prompts.requirements import (
+    REQUIREMENTS_EXTRACTION_PROMPT_VERSION,
+    RequirementsExtractionOutputSchema,
+    build_requirements_extraction_messages,
+    estimate_requirements_prompt_tokens,
+    get_requirements_prompt_metadata,
+)
 from app.graph.state import AgenticState
 from app.services.llm_client import LLMProviderFactory
 
-logger = logging.getLogger("agentic_bridge.graph.processing_node")
 
-class ArchitecturalSpecificationSchema(BaseModel):
-    """
-    Pydantic schema enforcing strict enterprise structure for generated 
-    system architecture specifications and deployment topologies.
-    """
-    system_overview: str = Field(description="High-level architectural overview and design patterns selected.")
-    microservices: List[Dict[str, str]] = Field(description="List of required microservices with their primary responsibilities and communication protocols.")
-    database_entities: List[str] = Field(description="Key database tables, models, and vector storage requirements (e.g., PostgreSQL with pgvector).")
-    api_endpoints: List[str] = Field(description="Core FastAPI REST and MCP endpoints required to support the features.")
-    security_and_compliance: List[str] = Field(description="Security hardening, authentication, and compliance measures.")
-    deployment_recommendations: List[str] = Field(description="Containerization, orchestration (Docker Compose/K8s), and cloud target recommendations.")
+logger = logging.getLogger("agentic_bridge.graph.nodes.requirements")
 
-def processing_node(state: AgenticState) -> Dict[str, Any]:
+MAX_REQUIREMENTS = 100
+MAX_REQUIREMENT_CHARS = 500
+MAX_BRIEF_PROMPT_CHARS = MAX_SEARCH_QUERY_LENGTH
+MAX_FORMAT_INSTRUCTIONS_CHARS = 10_000
+
+
+# ---------------------------------------------------------------------------
+# Prompt input helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_brief_text(raw_brief_text: str | None) -> str:
     """
-    Production-grade LangGraph node responsible for synthesizing extracted requirements 
-    into a complete enterprise architectural specification with telemetry and retry hardening.
-    
+    Validate and bound the source brief text.
+
     Args:
-        state (AgenticState): Current graph execution state dictionary.
-        
+        raw_brief_text: Normalized brief text produced by the ingestion node.
+
     Returns:
-        Dict[str, Any]: State updates containing architectural specifications, telemetry, and execution logs.
+        Bounded brief text.
+
+    Raises:
+        WorkflowStateError: If the brief is missing or empty.
     """
-    execution_id = state.get("execution_id", "unknown-execution")
-    brief_id = state.get("brief_id", "unknown-brief")
-    extracted_requirements = state.get("extracted_requirements", [])
-    design_tokens = state.get("design_tokens", {})
+    if not raw_brief_text or not raw_brief_text.strip():
+        raise WorkflowStateError(
+            "Requirements extraction cannot continue without a source brief."
+        )
 
-    logger.info(f"[{execution_id}] Starting architectural processing node for brief ID: {brief_id}")
+    return truncate_text(
+        raw_brief_text.strip(),
+        MAX_BRIEF_PROMPT_CHARS,
+    )
 
-    if not extracted_requirements:
-        error_msg = f"[{execution_id}] Processing failed: No extracted requirements found in graph state."
-        logger.error(error_msg)
-        return {
-            "current_error": error_msg,
-            "execution_logs": [f"ERROR: {error_msg}"]
-        }
 
-    start_time = time.time()
-    max_retries = 2
-    attempt = 0
-    parsed_spec = None
-    token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+def _normalize_requirement(
+    requirement: str,
+) -> str | None:
+    """Normalize and bound a single extracted requirement."""
+    if not isinstance(requirement, str):
+        return None
+
+    normalized_requirement = requirement.strip()
+
+    if not normalized_requirement:
+        return None
+
+    return truncate_text(
+        normalized_requirement,
+        MAX_REQUIREMENT_CHARS,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
+
+
+async def requirements_node(
+    state: AgenticState,
+) -> AgenticState:
+    """
+    Extract validated requirements from the source brief.
+
+    Args:
+        state: Current LangGraph workflow state.
+
+    Returns:
+        State updates containing extracted requirements, confidence,
+        assumptions, prompt metadata, provider telemetry, logs, and error
+        information.
+
+    Raises:
+        WorkflowStateError: If required workflow inputs are missing.
+        ExternalProviderError: If the language-model provider fails.
+    """
+    execution_id = str(state.get("execution_id") or "unknown-execution")
+    brief_id = str(state.get("brief_id") or "unknown-brief")
+    raw_brief_text = state.get("raw_brief_text")
+
+    bind_workflow_context(
+        execution_id,
+        workflow_step=WorkflowStep.REQUIREMENTS,
+        tenant_id=state.get("tenant_id"),
+        user_id=state.get("user_id"),
+    )
+
+    logger.info(
+        "requirements_extraction_started",
+        brief_id=brief_id,
+        brief_length=len(raw_brief_text or ""),
+    )
 
     try:
-        while attempt <= max_retries:
-            try:
-                attempt += 1
-                # Instantiate LLM via multi-provider factory
-                llm = LLMProviderFactory.get_llm(temperature=0.2)
-                
-                # Setup Pydantic output parser
-                parser = PydanticOutputParser(pydantic_object=ArchitecturalSpecificationSchema)
-                
-                # Construct prompt template for systems architecture synthesis
-                prompt_template = ChatPromptTemplate.from_messages([
-                    (
-                        "system",
-                        "You are a Principal Enterprise Systems Architect and Chief Technology Officer. "
-                        "Design a robust, containerized, production-ready system architecture based on the provided "
-                        "extracted requirements and design tokens. Define microservices, data models, API endpoints, "
-                        "security measures, and deployment targets.\n{format_instructions}"
-                    ),
-                    (
-                        "human",
-                        "Extracted Requirements:\n{requirements}\n\nDesign Tokens / Constraints:\n{tokens}"
-                    )
-                ])
-                
-                prompt = prompt_template.format_messages(
-                    format_instructions=parser.get_format_instructions(),
-                    requirements="\n".join([f"- {req}" for req in extracted_requirements]),
-                    tokens=str(design_tokens)
-                )
+        bounded_brief = _build_brief_text(raw_brief_text)
 
-                logger.debug(f"[{execution_id}] Dispatching architecture synthesis prompt (Attempt {attempt}/{max_retries + 1})...")
-                
-                response = llm.invoke(prompt)
-                
-                # Extract token usage telemetry if available in response metadata
-                response_metadata = getattr(response, "response_metadata", {})
-                usage = response_metadata.get("token_usage", {})
-                token_usage = {
-                    "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "completion_tokens": usage.get("completion_tokens", 0),
-                    "total_tokens": usage.get("total_tokens", 0)
-                }
+        llm = LLMProviderFactory.get_llm(temperature=0.1)
 
-                parsed_spec = parser.parse(response.content)
-                break  # Success, exit retry loop
+        parser = PydanticOutputParser(
+            pydantic_object=RequirementsExtractionOutputSchema
+        )
 
-            except Exception as inner_e:
-                logger.warning(f"[{execution_id}] Processing attempt {attempt} failed: {str(inner_e)}")
-                if attempt > max_retries:
-                    raise inner_e
-                time.sleep(1.5 * attempt)  # Exponential backoff
+        format_instructions = parser.get_format_instructions()
 
-        duration = round(time.time() - start_time, 2)
-        logger.info(f"[{execution_id}] Successfully synthesized architectural spec in {duration}s using {token_usage['total_tokens']} tokens.")
+        messages = build_requirements_extraction_messages(
+            brief_text=bounded_brief,
+            format_instructions=format_instructions,
+        )
+
+        estimated_prompt_tokens = estimate_requirements_prompt_tokens(
+            brief_text=bounded_brief,
+            format_instructions=format_instructions,
+        )
+
+        prompt_metadata = get_requirements_prompt_metadata()
+
+        logger.debug(
+            "requirements_extraction_llm_dispatched",
+            brief_id=brief_id,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            prompt_version=REQUIREMENTS_EXTRACTION_PROMPT_VERSION,
+        )
+
+        response = await llm.ainvoke(messages)
+
+        parsed_requirements = parser.parse(response.content)
+
+        normalized_requirements: list[str] = []
+        seen_requirements: set[str] = set()
+
+        for requirement in parsed_requirements.requirements:
+            normalized_requirement = _normalize_requirement(requirement)
+
+            if normalized_requirement is None:
+                continue
+
+            requirement_key = normalized_requirement.lower()
+
+            if requirement_key not in seen_requirements:
+                seen_requirements.add(requirement_key)
+                normalized_requirements.append(normalized_requirement)
+
+        if not normalized_requirements:
+            raise ValidationError(
+                "The language model did not return any usable requirements."
+            )
+
+        if len(normalized_requirements) > MAX_REQUIREMENTS:
+            normalized_requirements = normalized_requirements[
+                :MAX_REQUIREMENTS
+            ]
+
+        logger.info(
+            "requirements_extraction_completed",
+            brief_id=brief_id,
+            requirement_count=len(normalized_requirements),
+            confidence=parsed_requirements.confidence,
+            prompt_version=REQUIREMENTS_EXTRACTION_PROMPT_VERSION,
+        )
 
         return {
-            "architectural_specification": {
-                "system_overview": parsed_spec.system_overview,
-                "microservices": parsed_spec.microservices,
-                "database_entities": parsed_spec.database_entities,
-                "api_endpoints": parsed_spec.api_endpoints,
-                "security_and_compliance": parsed_spec.security_and_compliance,
-                "deployment_recommendations": parsed_spec.deployment_recommendations
+            "current_step": WorkflowStep.REQUIREMENTS,
+            "extracted_requirements": normalized_requirements,
+            "requirement_confidence": parsed_requirements.confidence,
+            "requirement_metadata": {
+                "assumptions": parsed_requirements.assumptions,
+                "missing_information": parsed_requirements.missing_information,
+                "prompt_version": REQUIREMENTS_EXTRACTION_PROMPT_VERSION,
+                "prompt_name": prompt_metadata["prompt_name"],
             },
-            "design_tokens": {
-                **design_tokens,
-                "processing_duration_seconds": duration,
-                "token_usage": token_usage
+            "requirements_finalized": True,
+            "design_prompt_version": None,
+            "provider_name": state.get("provider_name"),
+            "provider_model": state.get("provider_model"),
+            "provider_token_usage": {
+                "estimated_prompt_tokens": estimated_prompt_tokens,
             },
-            "current_error": None,
             "execution_logs": [
-                f"SUCCESS: Processing node generated architectural specification in {duration}s ({token_usage['total_tokens']} tokens)."
-            ]
+                (
+                    "SUCCESS: Requirements extraction completed. Extracted "
+                    f"{len(normalized_requirements)} actionable requirements."
+                )
+            ],
+            "current_error": None,
+            "error_step": None,
+            "error_code": None,
         }
 
-    except Exception as e:
-        error_msg = f"[{execution_id}] Critical exception in processing node: {str(e)}"
-        logger.exception(error_msg)
+    except (ProviderTimeoutError, ExternalProviderError):
+        logger.exception(
+            "requirements_extraction_provider_failure",
+            brief_id=brief_id,
+        )
+
         return {
-            "current_error": error_msg,
-            "execution_logs": [f"ERROR: {error_msg}"]
+            "current_step": WorkflowStep.REQUIREMENTS,
+            "current_error": (
+                "Requirements extraction failed because the language-model "
+                "provider was unavailable or timed out."
+            ),
+            "error_step": WorkflowStep.REQUIREMENTS,
+            "error_code": "provider_timeout",
+            "recoverable_error": True,
+            "execution_logs": [
+                "ERROR: Requirements extraction failed due to a provider timeout."
+            ],
+        }
+
+    except ValidationError as exc:
+        logger.warning(
+            "requirements_extraction_validation_failed",
+            brief_id=brief_id,
+            error=str(exc),
+        )
+
+        return {
+            "current_step": WorkflowStep.REQUIREMENTS,
+            "current_error": (
+                "Requirements extraction produced invalid or incomplete output."
+            ),
+            "error_step": WorkflowStep.REQUIREMENTS,
+            "error_code": "requirements_validation_error",
+            "recoverable_error": True,
+            "execution_logs": [
+                "ERROR: Requirements extraction output failed validation."
+            ],
+        }
+
+    except Exception:
+        logger.exception(
+            "requirements_extraction_unexpected_failure",
+            brief_id=brief_id,
+        )
+
+        return {
+            "current_step": WorkflowStep.REQUIREMENTS,
+            "current_error": (
+                "Requirements extraction failed due to an unexpected "
+                "workflow error."
+            ),
+            "error_step": WorkflowStep.REQUIREMENTS,
+            "error_code": "requirements_extraction_error",
+            "recoverable_error": False,
+            "execution_logs": [
+                "ERROR: Requirements extraction failed unexpectedly."
+            ],
         }

@@ -1,180 +1,795 @@
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, TypedDict, Annotated
-import operator
-import time
+"""
+Workflow execution API routes.
+
+These routes provide tenant-scoped workflow creation, listing, retrieval,
+status transitions, cancellation, step inspection, approvals, artifacts,
+retry handling, and workflow analytics. All operations enforce tenant
+isolation and explicit authorization scopes.
+"""
+
+from __future__ import annotations
+
 import logging
-import os
+from datetime import datetime
+from typing import Annotated, Any
+from uuid import UUID
 
-from langgraph.graph import StateGraph, START, END
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
+from pydantic import (
+    BaseModel,
+    Field,
+)
 
-router = APIRouter(prefix="/workflows", tags=["Agentic Workflow Orchestration"])
-logger = logging.getLogger("agentic_bridge.workflow_router")
-
-# --- Define Enterprise Agent State ---
-class AgentWorkflowState(TypedDict):
-    task: str
-    plan: List[str]
-    current_step: str
-    execution_logs: Annotated[List[str], operator.add]
-    raw_output: str
-    refined_output: str
-    status: str
-    start_time: float
-
-
-# --- Pydantic Request & Response Schemas ---
-class WorkflowRequest(BaseModel):
-    task: str = Field(..., min_length=3, description="Complex natural language prompt or task for agent orchestration")
-    temperature: float = Field(0.2, ge=0.0, le=1.0, description="LLM generation temperature")
-
-
-class WorkflowResponse(BaseModel):
-    workflow_id: str
-    task: str
-    plan: List[str]
-    final_output: str
-    execution_logs: List[str]
-    status: str
-    latency_seconds: float
-
-
-# --- LangGraph Nodes & Agentic Logic ---
-
-async def planning_node(state: AgentWorkflowState) -> Dict[str, Any]:
-    """Phase 1: Analyzes the incoming task and formulates a multi-step execution plan."""
-    logger.info(f"Executing planning node for task: {state['task']}")
-    
-    # Simulate or generate a structured execution plan
-    plan_steps = [
-        "1. Intake and semantic validation of objective",
-        "2. Retrieval-augmented context lookup via pgvector embeddings",
-        "3. Multi-modal synthesis and reasoning execution",
-        "4. Enterprise guardrail and quality critique check"
-    ]
-    
-    return {
-        "plan": plan_steps,
-        "current_step": "execution",
-        "execution_logs": [f"[{time.strftime('%H:%M:%S')}] Planning Node: Formulated 4-step execution strategy."]
-    }
+from app.api.dependencies import (
+    CurrentPrincipal,
+    DatabaseSession,
+    Pagination,
+    require_scoped_access,
+)
+from app.api.pagination import (
+    build_paginated_response,
+)
+from app.api.schemas import (
+    WorkflowCreateRequest,
+    WorkflowExecutionResponse,
+    WorkflowStatusUpdateRequest,
+)
+from app.core.exceptions import ValidationError
+from app.repositories.approval_repository import (
+    ApprovalRepository,
+)
+from app.repositories.artifact_repository import (
+    ArtifactRepository,
+)
+from app.repositories.audit_log_repository import (
+    AuditLogRepository,
+)
+from app.repositories.workflow_repository import (
+    WorkflowRepository,
+)
 
 
-async def execution_node(state: AgentWorkflowState) -> Dict[str, Any]:
-    """Phase 2: Executes core reasoning and tool interaction using ChatOpenAI."""
-    logger.info("Executing core reasoning node with ChatOpenAI...")
-    
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OpenAI API key is not configured in environment variables."
-        )
+logger = logging.getLogger(
+    "agentic_bridge.api.workflow_router"
+)
 
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.2,
-        api_key=api_key
+
+router = APIRouter(
+    prefix="/workflows",
+    tags=["Workflows"],
+)
+
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
+
+class WorkflowRetryRequest(BaseModel):
+    """Request to retry a failed workflow execution."""
+
+    reason: str | None = Field(
+        default=None,
+        max_length=1_000,
+        description="Optional reason for retrying the workflow.",
     )
-    
-    system_prompt = (
-        "You are an enterprise-grade autonomous AI agent operating inside AgenticBridge-MCP. "
-        "Provide precise, structured, and actionable analytical outputs for the given objective."
+
+
+class WorkflowStepResponse(BaseModel):
+    """Workflow step execution detail."""
+
+    step_name: str
+    status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
+    metadata: dict[str, Any] = Field(
+        default_factory=dict
     )
-    
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Objective: {state['task']}\n\nExecute the requested workflow task professionally.")
-    ]
-    
-    try:
-        response = await llm.ainvoke(messages)
-        output_text = response.content
-    except Exception as e:
-        logger.error(f"LLM execution error: {str(e)}")
-        output_text = f"Executed with fallback simulation: Processed objective successfully for '{state['task']}'."
-
-    return {
-        "raw_output": output_text,
-        "current_step": "critique",
-       # Correct
-"execution_logs": [f"[{time.strftime('%H:%M:%S')}] Execution Node: Successfully generated primary response via GPT-4o-mini."]
-    }
-
-async def critique_and_refine_node(state: AgentWorkflowState) -> Dict[str, Any]:
-    """Phase 3: Evaluates output quality and finalizes the refined enterprise response."""
-    logger.info("Executing critique and refinement node...")
-    
-    raw = state.get("raw_output", "")
-    refined = f"{raw}\n\n[Validated by AgenticBridge-MCP Enterprise Quality Assurance]"
-    
-    elapsed = time.time() - state["start_time"]
-    
-    return {
-        "refined_output": refined,
-        "current_step": "completed",
-        "status": "success",
-        "latency_seconds": round(elapsed, 4),
-        "execution_logs": [f"[{time.strftime('%H:%M:%S')}] Critique Node: Quality check passed. Workflow finalized."]
-    }
 
 
-# --- Build and Compile LangGraph State Graph ---
-workflow_builder = StateGraph(AgentWorkflowState)
-
-# Add nodes
-workflow_builder.add_node("planner", planning_node)
-workflow_builder.add_node("executor", execution_node)
-workflow_builder.add_node("critique", critique_and_refine_node)
-
-# Define edges (Linear pipeline with explicit START and END)
-workflow_builder.add_edge(START, "planner")
-workflow_builder.add_edge("planner", "executor")
-workflow_builder.add_edge("executor", "critique")
-workflow_builder.add_edge("critique", END)
-
-compiled_workflow = workflow_builder.compile()
+# ---------------------------------------------------------------------------
+# Workflow collection
+# ---------------------------------------------------------------------------
 
 
-# --- API Endpoint Implementation ---
-@router.post("/", response_model=WorkflowResponse)
-async def run_agentic_workflow(payload: WorkflowRequest):
-    """
-    Triggers an autonomous multi-step LangGraph agentic workflow execution loop 
-    with planning, execution, and validation phases.
-    """
-    workflow_id = "wf_exec_" + os.urandom(4).hex()
-    logger.info(f"Starting workflow ID: {workflow_id} for task: {payload.task}")
-    
-    initial_state: AgentWorkflowState = {
-        "task": payload.task,
-        "plan": [],
-        "current_step": "planning",
-        "execution_logs": [f"[{time.strftime('%H:%M:%S')}] Workflow {workflow_id} initialized."],
-        "raw_output": "",
-        "refined_output": "",
-        "status": "running",
-        "start_time": time.time()
-    }
-    
-    try:
-        # Execute compiled LangGraph graph asynchronously
-        final_state = await compiled_workflow.ainvoke(initial_state)
-        
-        return WorkflowResponse(
-            workflow_id=workflow_id,
-            task=payload.task,
-            plan=final_state.get("plan", []),
-            final_output=final_state.get("refined_output", "Workflow completed."),
-            execution_logs=final_state.get("execution_logs", []),
-            status=final_state.get("status", "success"),
-            latency_seconds=final_state.get("latency_seconds", 0.0)
+@router.get(
+    "",
+    summary="List workflow executions",
+    description=(
+        "List tenant-scoped workflow executions with optional filters."
+    ),
+)
+async def list_workflows(
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:read"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+    pagination: Pagination,
+    workflow_status: Annotated[
+        str | None,
+        Query(
+            max_length=50,
+            description=(
+                "Filter by queued, processing, waiting_approval, completed, "
+                "failed, or cancelled."
+            ),
+        ),
+    ] = None,
+    workflow_type: Annotated[
+        str | None,
+        Query(
+            max_length=100,
+            description="Filter by workflow type.",
+        ),
+    ] = None,
+    current_step: Annotated[
+        str | None,
+        Query(
+            max_length=100,
+            description="Filter by current workflow step.",
+        ),
+    ] = None,
+    created_after: Annotated[
+        datetime | None,
+        Query(
+            description=(
+                "Return workflows created on or after this time."
+            ),
+        ),
+    ] = None,
+    created_before: Annotated[
+        datetime | None,
+        Query(
+            description=(
+                "Return workflows created on or before this time."
+            ),
+        ),
+    ] = None,
+):
+    """List tenant workflow executions."""
+    workflows, total_count = (
+        await WorkflowRepository.list_executions(
+            db,
+            tenant_id=principal.tenant_id,
+            skip=pagination.skip,
+            limit=pagination.limit,
+            status_filter=workflow_status,
+            workflow_type_filter=workflow_type,
+            current_step_filter=current_step,
+            created_after=created_after,
+            created_before=created_before,
         )
-    except Exception as e:
-        logger.error(f"Workflow execution failed: {str(e)}")
+    )
+
+    await db.commit()
+
+    return build_paginated_response(
+        workflows,
+        skip=pagination.skip,
+        limit=pagination.limit,
+        total_count=total_count,
+    )
+
+
+@router.post(
+    "",
+    response_model=WorkflowExecutionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Create workflow execution",
+    description=(
+        "Create and queue a tenant-scoped workflow execution."
+    ),
+)
+async def create_workflow(
+    payload: WorkflowCreateRequest,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:write"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+    request: Request,
+) -> WorkflowExecutionResponse:
+    """Create a tenant workflow execution."""
+    try:
+        workflow = (
+            await WorkflowRepository.create_workflow(
+                db,
+                tenant_id=principal.tenant_id,
+                created_by=principal.user_id,
+                workflow_type=payload.workflow_type,
+                title=payload.title,
+                input_data=payload.input_data,
+                metadata=payload.metadata,
+            )
+        )
+    except ValidationError as exc:
+        await db.rollback()
+
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Agentic workflow execution failed: {str(e)}"
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    await AuditLogRepository.record_event(
+        db,
+        tenant_id=principal.tenant_id,
+        event_type="workflow_created",
+        actor_id=principal.user_id,
+        execution_id=workflow.execution_id,
+        resource_type="workflow",
+        resource_id=workflow.execution_id,
+        action="create_workflow",
+        outcome=workflow.status,
+        metadata={
+            "workflow_type": workflow.workflow_type,
+            "title": workflow.title,
+        },
+    )
+
+    await db.commit()
+
+    logger.info(
+        "Workflow created.",
+        extra={
+            "execution_id": str(
+                workflow.execution_id
+            ),
+            "tenant_id": str(
+                principal.tenant_id
+            ),
+            "actor_id": str(
+                principal.user_id
+            ),
+            "workflow_type": workflow.workflow_type,
+            "request_id": request.headers.get(
+                "X-Request-ID"
+            ),
+        },
+    )
+
+    return workflow
+
+
+# ---------------------------------------------------------------------------
+# Individual workflows
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{execution_id}",
+    response_model=WorkflowExecutionResponse,
+    summary="Get workflow execution",
+    description=(
+        "Retrieve a tenant-scoped workflow execution by execution ID."
+    ),
+)
+async def get_workflow(
+    execution_id: UUID,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:read"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+) -> WorkflowExecutionResponse:
+    """Retrieve a tenant workflow execution."""
+    workflow = (
+        await WorkflowRepository.get_by_execution_id(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
         )
+    )
+
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow execution not found.",
+        )
+
+    await db.commit()
+
+    return workflow
+
+
+@router.get(
+    "/{execution_id}/steps",
+    response_model=list[WorkflowStepResponse],
+    summary="Get workflow steps",
+    description=(
+        "Retrieve step-level execution details for a workflow."
+    ),
+)
+async def get_workflow_steps(
+    execution_id: UUID,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:read"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+) -> list[WorkflowStepResponse]:
+    """Retrieve workflow step details."""
+    workflow = (
+        await WorkflowRepository.get_by_execution_id(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+        )
+    )
+
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow execution not found.",
+        )
+
+    steps = (
+        await WorkflowRepository.get_workflow_steps(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+        )
+    )
+
+    await db.commit()
+
+    return [
+        WorkflowStepResponse(
+            step_name=step.get(
+                "step_name",
+                "unknown",
+            ),
+            status=step.get(
+                "status",
+                "unknown",
+            ),
+            started_at=step.get(
+                "started_at"
+            ),
+            completed_at=step.get(
+                "completed_at"
+            ),
+            error_message=step.get(
+                "error_message"
+            ),
+            metadata=step.get(
+                "metadata",
+                {},
+            ),
+        )
+        for step in steps
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Workflow lifecycle
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{execution_id}/status",
+    response_model=WorkflowExecutionResponse,
+    summary="Update workflow status",
+    description=(
+        "Explicitly update a tenant workflow execution status. Requires the "
+        "`workflows:write` scope."
+    ),
+)
+async def update_workflow_status(
+    execution_id: UUID,
+    payload: WorkflowStatusUpdateRequest,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:write"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+) -> WorkflowExecutionResponse:
+    """Update a tenant workflow execution status."""
+    try:
+        workflow = (
+            await WorkflowRepository.set_workflow_status(
+                db,
+                execution_id=execution_id,
+                tenant_id=principal.tenant_id,
+                status=payload.status,
+            )
+        )
+    except ValidationError as exc:
+        await db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow execution not found.",
+        )
+
+    await AuditLogRepository.record_event(
+        db,
+        tenant_id=principal.tenant_id,
+        event_type="workflow_status_changed",
+        actor_id=principal.user_id,
+        execution_id=workflow.execution_id,
+        resource_type="workflow",
+        resource_id=workflow.execution_id,
+        action="update_workflow_status",
+        outcome=workflow.status,
+        metadata={
+            "workflow_status": workflow.status,
+        },
+    )
+
+    await db.commit()
+
+    logger.info(
+        "Workflow status updated.",
+        extra={
+            "execution_id": str(
+                workflow.execution_id
+            ),
+            "tenant_id": str(
+                principal.tenant_id
+            ),
+            "actor_id": str(
+                principal.user_id
+            ),
+            "workflow_status": workflow.status,
+        },
+    )
+
+    return workflow
+
+
+@router.post(
+    "/{execution_id}/cancel",
+    response_model=WorkflowExecutionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Cancel workflow execution",
+    description=(
+        "Request cancellation of a tenant workflow execution."
+    ),
+)
+async def cancel_workflow(
+    execution_id: UUID,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:write"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+) -> WorkflowExecutionResponse:
+    """Request cancellation of a tenant workflow execution."""
+    workflow = (
+        await WorkflowRepository.mark_cancel_requested(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+        )
+    )
+
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow execution not found.",
+        )
+
+    await AuditLogRepository.record_event(
+        db,
+        tenant_id=principal.tenant_id,
+        event_type="workflow_cancel_requested",
+        actor_id=principal.user_id,
+        execution_id=workflow.execution_id,
+        resource_type="workflow",
+        resource_id=workflow.execution_id,
+        action="cancel_workflow",
+        outcome=workflow.status,
+        metadata={
+            "cancel_requested": workflow.cancel_requested,
+        },
+    )
+
+    await db.commit()
+
+    logger.info(
+        "Workflow cancellation requested.",
+        extra={
+            "execution_id": str(
+                workflow.execution_id
+            ),
+            "tenant_id": str(
+                principal.tenant_id
+            ),
+            "actor_id": str(
+                principal.user_id
+            ),
+        },
+    )
+
+    return workflow
+
+
+@router.post(
+    "/{execution_id}/retry",
+    response_model=WorkflowExecutionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Retry workflow execution",
+    description=(
+        "Retry a failed or cancelled tenant workflow execution."
+    ),
+)
+async def retry_workflow(
+    execution_id: UUID,
+    payload: WorkflowRetryRequest,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:write"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+) -> WorkflowExecutionResponse:
+    """Retry a failed or cancelled workflow execution."""
+    existing_workflow = (
+        await WorkflowRepository.get_by_execution_id(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+        )
+    )
+
+    if not existing_workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow execution not found.",
+        )
+
+    if existing_workflow.status not in {
+        "failed",
+        "cancelled",
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Only failed or cancelled workflow executions can be retried."
+            ),
+        )
+
+    try:
+        workflow = (
+            await WorkflowRepository.retry_workflow(
+                db,
+                execution_id=execution_id,
+                tenant_id=principal.tenant_id,
+                requested_by=principal.user_id,
+                reason=payload.reason,
+            )
+        )
+    except ValidationError as exc:
+        await db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    await AuditLogRepository.record_event(
+        db,
+        tenant_id=principal.tenant_id,
+        event_type="workflow_retry_requested",
+        actor_id=principal.user_id,
+        execution_id=workflow.execution_id,
+        resource_type="workflow",
+        resource_id=workflow.execution_id,
+        action="retry_workflow",
+        outcome=workflow.status,
+        metadata={
+            "reason": payload.reason,
+        },
+    )
+
+    await db.commit()
+
+    logger.info(
+        "Workflow retry requested.",
+        extra={
+            "execution_id": str(
+                workflow.execution_id
+            ),
+            "tenant_id": str(
+                principal.tenant_id
+            ),
+            "actor_id": str(
+                principal.user_id
+            ),
+        },
+    )
+
+    return workflow
+
+
+# ---------------------------------------------------------------------------
+# Related resources
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{execution_id}/approvals",
+    summary="List workflow approvals",
+    description=(
+        "List approval requests associated with a workflow execution."
+    ),
+)
+async def list_workflow_approvals(
+    execution_id: UUID,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:read"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+    pagination: Pagination,
+):
+    """List approvals for a workflow execution."""
+    workflow = (
+        await WorkflowRepository.get_by_execution_id(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+        )
+    )
+
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow execution not found.",
+        )
+
+    approvals, total_count = (
+        await ApprovalRepository.list_approvals_for_execution(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+            skip=pagination.skip,
+            limit=pagination.limit,
+        )
+    )
+
+    await db.commit()
+
+    return build_paginated_response(
+        approvals,
+        skip=pagination.skip,
+        limit=pagination.limit,
+        total_count=total_count,
+    )
+
+
+@router.get(
+    "/{execution_id}/artifacts",
+    summary="List workflow artifacts",
+    description=(
+        "List generated artifacts associated with a workflow execution."
+    ),
+)
+async def list_workflow_artifacts(
+    execution_id: UUID,
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:read"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+    pagination: Pagination,
+):
+    """List artifacts for a workflow execution."""
+    workflow = (
+        await WorkflowRepository.get_by_execution_id(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+        )
+    )
+
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow execution not found.",
+        )
+
+    artifacts, total_count = (
+        await ArtifactRepository.list_artifacts_for_execution(
+            db,
+            execution_id=execution_id,
+            tenant_id=principal.tenant_id,
+            skip=pagination.skip,
+            limit=pagination.limit,
+        )
+    )
+
+    await db.commit()
+
+    return build_paginated_response(
+        artifacts,
+        skip=pagination.skip,
+        limit=pagination.limit,
+        total_count=total_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/analytics",
+    summary="Workflow analytics",
+    description=(
+        "Return aggregate workflow execution analytics for the tenant."
+    ),
+)
+async def get_workflow_analytics(
+    principal: Annotated[
+        object,
+        Depends(
+            require_scoped_access(
+                "workflows:read"
+            )
+        ),
+    ],
+    db: DatabaseSession,
+):
+    """Return tenant workflow analytics."""
+    analytics = (
+        await WorkflowRepository.get_execution_analytics(
+            db,
+            tenant_id=principal.tenant_id,
+        )
+    )
+
+    await db.commit()
+
+    return analytics

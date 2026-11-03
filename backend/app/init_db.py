@@ -4,7 +4,7 @@ import sys
 
 from sqlalchemy import text
 
-from app.database import (
+from app.core.database import (
     async_engine,
     Base,
 )

@@ -1,0 +1,1003 @@
+"""
+Application-wide constants.
+
+Use these constants for API paths, HTTP headers, validation limits, workflow
+defaults, cache keys, and operational timeouts. Centralizing them prevents
+magic numbers and inconsistent string literals across the codebase.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+
+
+# ---------------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------------
+
+
+API_TITLE = "AgenticBridge MCP"
+
+
+API_DESCRIPTION = (
+    "Enterprise agentic workflow platform for requirements ingestion, design "
+    "synthesis, code generation, validation, and human review."
+)
+
+
+API_VERSION = "1.0.0"
+
+
+API_V1_PREFIX = "/api/v1"
+
+
+OPENAPI_URL = "/openapi.json"
+DOCS_URL = "/docs"
+REDOC_URL = "/redoc"
+
+
+HEALTH_ENDPOINT = "/health"
+READY_ENDPOINT = "/ready"
+METRICS_ENDPOINT = "/metrics"
+
+
+API_TAG_SYSTEM = "System"
+API_TAG_DOCUMENTS = "Documents"
+API_TAG_WORKFLOWS = "Workflows"
+API_TAG_USERS = "Users"
+API_TAG_TENANTS = "Tenants"
+API_TAG_INTEGRATIONS = "Integrations"
+API_TAG_WEBHOOKS = "Webhooks"
+API_TAG_NOTIFICATIONS = "Notifications"
+API_TAG_SEARCH = "Search"
+API_TAG_USAGE = "Usage"
+API_TAG_ADMIN = "Admin"
+
+
+# ---------------------------------------------------------------------------
+# HTTP headers
+# ---------------------------------------------------------------------------
+
+
+REQUEST_ID_HEADER = "X-Request-ID"
+PROCESS_TIME_HEADER = "X-Process-Time"
+
+
+RATE_LIMIT_LIMIT_HEADER = (
+    "X-RateLimit-Limit"
+)
+RATE_LIMIT_REMAINING_HEADER = (
+    "X-RateLimit-Remaining"
+)
+RATE_LIMIT_RESET_HEADER = (
+    "X-RateLimit-Reset"
+)
+RETRY_AFTER_HEADER = "Retry-After"
+
+
+FORWARDED_FOR_HEADER = "X-Forwarded-For"
+REAL_IP_HEADER = "X-Real-IP"
+USER_AGENT_HEADER = "User-Agent"
+AUTHORIZATION_HEADER = "Authorization"
+CONTENT_TYPE_HEADER = "Content-Type"
+ACCEPT_HEADER = "Accept"
+LOCATION_HEADER = "Location"
+ETAG_HEADER = "ETag"
+IF_NONE_MATCH_HEADER = "If-None-Match"
+
+
+BEARER_TOKEN_PREFIX = "Bearer "
+API_KEY_PREFIX = "ApiKey "
+
+
+SECURITY_HEADERS: dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": (
+        "strict-origin-when-cross-origin"
+    ),
+    "Permissions-Policy": (
+        "camera=(), microphone=(), "
+        "geolocation=()"
+    ),
+    "Cross-Origin-Opener-Policy": (
+        "same-origin"
+    ),
+}
+
+
+PRODUCTION_SECURITY_HEADERS: dict[
+    str,
+    str,
+] = {
+    **SECURITY_HEADERS,
+    "Strict-Transport-Security": (
+        "max-age=31536000; includeSubDomains"
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Pagination
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_PAGE = 1
+DEFAULT_PAGE_SIZE = 25
+MIN_PAGE_SIZE = 1
+MAX_PAGE_SIZE = 100
+
+
+DEFAULT_SKIP = 0
+MAX_SKIP = 100_000
+
+
+DEFAULT_SORT_DIRECTION = "desc"
+ALLOWED_SORT_DIRECTIONS = frozenset(
+    {
+        "asc",
+        "desc",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Documents and ingestion
+# ---------------------------------------------------------------------------
+
+
+MAX_DOCUMENT_TITLE_LENGTH = 255
+MAX_DOCUMENT_DESCRIPTION_LENGTH = 2_000
+MAX_DOCUMENT_CONTENT_LENGTH = 1_000_000
+MAX_DOCUMENT_TAGS = 25
+MAX_DOCUMENT_TAG_LENGTH = 50
+MAX_DOCUMENT_BATCH_SIZE = 25
+
+
+MAX_SEARCH_QUERY_LENGTH = 10_000
+DEFAULT_VECTOR_SEARCH_LIMIT = 5
+MAX_VECTOR_SEARCH_LIMIT = 50
+MIN_VECTOR_SIMILARITY_SCORE = 0.0
+MAX_VECTOR_SIMILARITY_SCORE = 1.0
+
+
+DEFAULT_INGESTION_BATCH_SIZE = 10
+MIN_INGESTION_BATCH_SIZE = 1
+MAX_INGESTION_BATCH_SIZE = 100
+
+
+DEFAULT_INGESTION_TIMEOUT_SECONDS = 300
+MAX_INGESTION_TIMEOUT_SECONDS = 3_600
+
+
+ALLOWED_UPLOAD_EXTENSIONS: frozenset[
+    str
+] = frozenset(
+    {
+        ".txt",
+        ".md",
+        ".markdown",
+        ".pdf",
+        ".docx",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".csv",
+        ".xlsx",
+    }
+)
+
+
+SUPPORTED_UPLOAD_EXTENSIONS = (
+    ALLOWED_UPLOAD_EXTENSIONS
+)
+
+
+DEFAULT_UPLOAD_SIZE_LIMIT_MB = 20
+MAX_UPLOAD_SIZE_LIMIT_MB = 200
+
+
+DEFAULT_DOCUMENT_CHUNK_SIZE = 1_000
+MIN_DOCUMENT_CHUNK_SIZE = 100
+MAX_DOCUMENT_CHUNK_SIZE = 10_000
+
+
+DEFAULT_DOCUMENT_CHUNK_OVERLAP = 150
+MAX_DOCUMENT_CHUNK_OVERLAP = 2_000
+
+
+DOCUMENT_STATUS_PROCESSING = "processing"
+DOCUMENT_STATUS_READY = "ready"
+DOCUMENT_STATUS_FAILED = "failed"
+DOCUMENT_STATUS_ARCHIVED = "archived"
+DOCUMENT_STATUS_DELETED = "deleted"
+
+
+EMBEDDING_STATUS_PENDING = "pending"
+EMBEDDING_STATUS_PROCESSING = "processing"
+EMBEDDING_STATUS_READY = "ready"
+EMBEDDING_STATUS_FAILED = "failed"
+
+
+# ---------------------------------------------------------------------------
+# Workflow
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 900
+MAX_WORKFLOW_TIMEOUT_SECONDS = 7_200
+
+
+MAX_WORKFLOW_REQUIREMENTS = 100
+MAX_WORKFLOW_LOG_ENTRIES = 1_000
+MAX_WORKFLOW_RETRY_ATTEMPTS = 3
+DEFAULT_WORKFLOW_RETRY_DELAY_SECONDS = 5
+
+
+MAX_DESIGN_COMPONENTS = 50
+MAX_DESIGN_GUIDELINES = 50
+MAX_DESIGN_CONTEXT_DOCUMENTS = 5
+MAX_DESIGN_CONTEXT_CHARS = 4_000
+
+
+MAX_GENERATED_FILE_COUNT = 100
+MAX_GENERATED_FILE_SIZE_CHARS = 250_000
+
+
+WORKFLOW_STATUS_PENDING = "pending"
+WORKFLOW_STATUS_RUNNING = "running"
+WORKFLOW_STATUS_WAITING_APPROVAL = (
+    "waiting_approval"
+)
+WORKFLOW_STATUS_COMPLETED = "completed"
+WORKFLOW_STATUS_FAILED = "failed"
+WORKFLOW_STATUS_CANCELLED = "cancelled"
+
+
+TERMINAL_WORKFLOW_STATUSES = frozenset(
+    {
+        WORKFLOW_STATUS_COMPLETED,
+        WORKFLOW_STATUS_FAILED,
+        WORKFLOW_STATUS_CANCELLED,
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# LLM and embeddings
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_LLM_TEMPERATURE = 0.2
+MAX_LLM_TEMPERATURE = 2.0
+
+
+DEFAULT_LLM_MAX_TOKENS = 4_096
+MAX_LLM_MAX_TOKENS = 32_000
+
+
+DEFAULT_LLM_TIMEOUT_SECONDS = 60
+MAX_LLM_TIMEOUT_SECONDS = 600
+
+
+DEFAULT_LLM_RETRY_ATTEMPTS = 2
+DEFAULT_LLM_RETRY_BACKOFF_SECONDS = 1.5
+
+
+DEFAULT_EMBEDDING_MODEL = (
+    "text-embedding-3-small"
+)
+DEFAULT_EMBEDDING_DIMENSIONS = 1_536
+DEFAULT_EMBEDDING_BATCH_SIZE = 64
+MAX_EMBEDDING_BATCH_SIZE = 256
+
+
+DEFAULT_EMBEDDING_QUERY_TOP_K = 5
+MAX_EMBEDDING_QUERY_TOP_K = 50
+
+
+DEFAULT_RETRIEVAL_MODE = "semantic"
+ALLOWED_RETRIEVAL_MODES = frozenset(
+    {
+        "semantic",
+        "keyword",
+        "hybrid",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Caching
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_CACHE_TTL_SECONDS = 300
+SHORT_CACHE_TTL_SECONDS = 60
+LONG_CACHE_TTL_SECONDS = 3_600
+DAY_CACHE_TTL_SECONDS = 86_400
+
+
+CACHE_KEY_PREFIX = "agenticbridge"
+
+
+DOCUMENT_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:document"
+)
+WORKFLOW_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:workflow"
+)
+RATE_LIMIT_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:rate-limit"
+)
+EMBEDDING_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:embedding"
+)
+USER_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:user"
+)
+TENANT_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:tenant"
+)
+INTEGRATION_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:integration"
+)
+WEBHOOK_CACHE_PREFIX = (
+    f"{CACHE_KEY_PREFIX}:webhook"
+)
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_RATE_LIMIT_REQUESTS = 100
+DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+AUTH_RATE_LIMIT_REQUESTS = 10
+AUTH_RATE_LIMIT_WINDOW_SECONDS = 300
+
+
+WORKFLOW_RATE_LIMIT_REQUESTS = 20
+WORKFLOW_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+INGESTION_RATE_LIMIT_REQUESTS = 30
+INGESTION_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+SEARCH_RATE_LIMIT_REQUESTS = 60
+SEARCH_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+WEBHOOK_RATE_LIMIT_REQUESTS = 100
+WEBHOOK_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+MAX_IDENTIFIER_LENGTH = 64
+MAX_SLUG_LENGTH = 80
+MAX_EMAIL_LENGTH = 254
+MAX_URL_LENGTH = 2_048
+MAX_ERROR_MESSAGE_LENGTH = 500
+MAX_LOG_MESSAGE_LENGTH = 2_000
+
+
+MIN_PASSWORD_LENGTH = 12
+MAX_PASSWORD_LENGTH = 128
+
+
+MAX_NAME_LENGTH = 200
+MAX_DESCRIPTION_LENGTH = 5_000
+MAX_METADATA_KEYS = 100
+MAX_METADATA_VALUE_LENGTH = 10_000
+
+
+MAX_ROLE_LENGTH = 100
+MAX_PERMISSION_LENGTH = 100
+MAX_PERMISSIONS = 200
+
+
+# ---------------------------------------------------------------------------
+# Authentication and users
+# ---------------------------------------------------------------------------
+
+
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+MAX_TOKEN_EXPIRE_MINUTES = 1_440
+REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 30
+EMAIL_VERIFICATION_TOKEN_EXPIRE_DAYS = 3
+
+
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+DEFAULT_ACCOUNT_LOCKOUT_MINUTES = 15
+
+
+MFA_CODE_LENGTH = 6
+MFA_BACKUP_CODE_COUNT = 10
+
+
+DEFAULT_USER_ROLE = "member"
+OWNER_USER_ROLE = "owner"
+ADMIN_USER_ROLE = "admin"
+MEMBER_USER_ROLE = "member"
+VIEWER_USER_ROLE = "viewer"
+
+
+DEFAULT_USER_TIMEZONE = "UTC"
+DEFAULT_USER_LOCALE = "en"
+
+
+# ---------------------------------------------------------------------------
+# Tenants
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_TENANT_PLAN = "standard"
+TRIAL_TENANT_PLAN = "trial"
+ENTERPRISE_TENANT_PLAN = "enterprise"
+
+
+TENANT_STATUS_ACTIVE = "active"
+TENANT_STATUS_SUSPENDED = "suspended"
+TENANT_STATUS_DELETED = "deleted"
+
+
+DEFAULT_MAX_TENANT_USERS = 25
+DEFAULT_MAX_TENANT_DOCUMENTS = 1_000
+DEFAULT_MAX_TENANT_STORAGE_BYTES = (
+    1_073_741_824
+)
+DEFAULT_MAX_MONTHLY_API_CALLS = 10_000
+
+
+# ---------------------------------------------------------------------------
+# Integrations
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_INTEGRATION_STATUS = "connected"
+INTEGRATION_STATUS_CONNECTED = "connected"
+INTEGRATION_STATUS_DISCONNECTED = (
+    "disconnected"
+)
+INTEGRATION_STATUS_ERROR = "error"
+
+
+DEFAULT_SYNC_STATUS = "idle"
+SYNC_STATUS_IDLE = "idle"
+SYNC_STATUS_QUEUED = "queued"
+SYNC_STATUS_RUNNING = "running"
+SYNC_STATUS_COMPLETED = "completed"
+SYNC_STATUS_FAILED = "failed"
+
+
+DEFAULT_SYNC_BATCH_SIZE = 100
+MAX_SYNC_BATCH_SIZE = 1_000
+
+
+DEFAULT_INTEGRATION_TIMEOUT_SECONDS = 30
+MAX_INTEGRATION_TIMEOUT_SECONDS = 300
+
+
+# ---------------------------------------------------------------------------
+# Webhooks
+# ---------------------------------------------------------------------------
+
+
+WEBHOOK_EVENT_RECEIVED = "received"
+WEBHOOK_EVENT_PROCESSING = "processing"
+WEBHOOK_EVENT_PROCESSED = "processed"
+WEBHOOK_EVENT_FAILED = "failed"
+WEBHOOK_EVENT_DEAD_LETTERED = (
+    "dead_lettered"
+)
+WEBHOOK_EVENT_IGNORED = "ignored"
+
+
+WEBHOOK_DELIVERY_PENDING = "pending"
+WEBHOOK_DELIVERY_DELIVERED = "delivered"
+WEBHOOK_DELIVERY_FAILED = "failed"
+WEBHOOK_DELIVERY_DEAD_LETTERED = (
+    "dead_lettered"
+)
+
+
+DEFAULT_WEBHOOK_TIMEOUT_SECONDS = 10
+MAX_WEBHOOK_TIMEOUT_SECONDS = 120
+
+
+DEFAULT_WEBHOOK_MAX_ATTEMPTS = 5
+MAX_WEBHOOK_MAX_ATTEMPTS = 20
+
+
+DEFAULT_WEBHOOK_RETRY_BASE_DELAY_SECONDS = 5
+MAX_WEBHOOK_RETRY_BASE_DELAY_SECONDS = 3_600
+
+
+DEFAULT_WEBHOOK_SIGNATURE_ALGORITHM = (
+    "hmac-sha256"
+)
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+
+NOTIFICATION_STATUS_UNREAD = "unread"
+NOTIFICATION_STATUS_READ = "read"
+NOTIFICATION_STATUS_ARCHIVED = "archived"
+
+
+NOTIFICATION_CHANNEL_EMAIL = "email"
+NOTIFICATION_CHANNEL_IN_APP = "in_app"
+NOTIFICATION_CHANNEL_WEBHOOK = "webhook"
+NOTIFICATION_CHANNEL_PUSH = "push"
+NOTIFICATION_CHANNEL_SMS = "sms"
+
+
+ALLOWED_NOTIFICATION_CHANNELS = frozenset(
+    {
+        NOTIFICATION_CHANNEL_EMAIL,
+        NOTIFICATION_CHANNEL_IN_APP,
+        NOTIFICATION_CHANNEL_WEBHOOK,
+        NOTIFICATION_CHANNEL_PUSH,
+        NOTIFICATION_CHANNEL_SMS,
+    }
+)
+
+
+DEFAULT_NOTIFICATION_PRIORITY = 5
+MAX_NOTIFICATION_TITLE_LENGTH = 300
+
+
+# ---------------------------------------------------------------------------
+# Usage, quotas, and billing
+# ---------------------------------------------------------------------------
+
+
+USAGE_TYPE_LLM_TOKENS = "llm_tokens"
+USAGE_TYPE_EMBEDDING_TOKENS = (
+    "embedding_tokens"
+)
+USAGE_TYPE_API_CALLS = "api_calls"
+USAGE_TYPE_DOCUMENTS = "documents"
+USAGE_TYPE_STORAGE_BYTES = "storage_bytes"
+USAGE_TYPE_WORKFLOW_EXECUTIONS = (
+    "workflow_executions"
+)
+
+
+DEFAULT_USAGE_CURRENCY = "USD"
+
+
+DEFAULT_TOKEN_QUOTA = 1_000_000
+DEFAULT_REQUEST_QUOTA = 10_000
+DEFAULT_COST_QUOTA = 100.0
+
+
+TOKENS_PER_MILLION = 1_000_000
+
+
+# ---------------------------------------------------------------------------
+# Retention
+# ---------------------------------------------------------------------------
+
+
+RETENTION_ACTION_DELETE = "delete"
+RETENTION_ACTION_ARCHIVE = "archive"
+RETENTION_ACTION_ANONYMIZE = "anonymize"
+
+
+ALLOWED_RETENTION_ACTIONS = frozenset(
+    {
+        RETENTION_ACTION_DELETE,
+        RETENTION_ACTION_ARCHIVE,
+        RETENTION_ACTION_ANONYMIZE,
+    }
+)
+
+
+DEFAULT_RETENTION_DAYS = 365
+MIN_RETENTION_DAYS = 1
+MAX_RETENTION_DAYS = 3_650
+
+
+DEFAULT_RETENTION_BATCH_SIZE = 1_000
+MAX_RETENTION_BATCH_SIZE = 100_000
+
+
+DEFAULT_RETENTION_RUNTIME_MINUTES = 60
+MAX_RETENTION_RUNTIME_MINUTES = 1_440
+
+
+# ---------------------------------------------------------------------------
+# MCP
+# ---------------------------------------------------------------------------
+
+
+MCP_PROTOCOL_VERSION = "2025-06-18"
+
+
+MCP_SERVER_NAME = "agentic-bridge-mcp"
+MCP_SERVER_VERSION = API_VERSION
+
+
+MCP_DEFAULT_TIMEOUT_SECONDS = 60
+MCP_MAX_TIMEOUT_SECONDS = 600
+
+
+MCP_TOOL_NAMESPACE = "agenticbridge"
+
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_DB_POOL_SIZE = 10
+DEFAULT_DB_MAX_OVERFLOW = 20
+DEFAULT_DB_POOL_TIMEOUT_SECONDS = 30
+DEFAULT_DB_POOL_RECYCLE_SECONDS = 1_800
+DEFAULT_DB_STATEMENT_TIMEOUT_SECONDS = 30
+
+
+MAX_DB_RETRY_ATTEMPTS = 3
+DEFAULT_DB_RETRY_DELAY_SECONDS = 0.5
+
+
+ASYNC_POSTGRES_SCHEME = (
+    "postgresql+asyncpg"
+)
+
+
+# ---------------------------------------------------------------------------
+# Time
+# ---------------------------------------------------------------------------
+
+
+SECONDS_PER_MINUTE = 60
+SECONDS_PER_HOUR = 3_600
+SECONDS_PER_DAY = 86_400
+
+
+MILLISECONDS_PER_SECOND = 1_000
+
+
+# ---------------------------------------------------------------------------
+# Error codes
+# ---------------------------------------------------------------------------
+
+
+class ErrorCode(str, Enum):
+    """Stable machine-readable application error codes."""
+
+    INTERNAL_ERROR = "internal_error"
+    VALIDATION_ERROR = "validation_error"
+    NOT_FOUND_ERROR = "not_found"
+    CONFLICT_ERROR = "conflict"
+    AUTHENTICATION_ERROR = (
+        "authentication_error"
+    )
+    AUTHORIZATION_ERROR = (
+        "authorization_error"
+    )
+    RATE_LIMIT_ERROR = "rate_limit_exceeded"
+    PROVIDER_ERROR = (
+        "external_provider_error"
+    )
+    DATABASE_ERROR = "database_error"
+    DATABASE_INTEGRITY_ERROR = (
+        "database_integrity_error"
+    )
+    DATABASE_UNAVAILABLE = (
+        "database_unavailable"
+    )
+    WORKFLOW_ERROR = "workflow_error"
+    INGESTION_ERROR = "ingestion_error"
+    EMBEDDING_ERROR = "embedding_error"
+    RETRIEVAL_ERROR = "retrieval_error"
+    INTEGRATION_ERROR = "integration_error"
+    WEBHOOK_ERROR = "webhook_error"
+
+
+ERROR_CODE_INTERNAL = (
+    ErrorCode.INTERNAL_ERROR.value
+)
+ERROR_CODE_VALIDATION = (
+    ErrorCode.VALIDATION_ERROR.value
+)
+ERROR_CODE_NOT_FOUND = (
+    ErrorCode.NOT_FOUND_ERROR.value
+)
+ERROR_CODE_CONFLICT = (
+    ErrorCode.CONFLICT_ERROR.value
+)
+ERROR_CODE_UNAUTHORIZED = (
+    ErrorCode.AUTHENTICATION_ERROR.value
+)
+ERROR_CODE_AUTHORIZATION = (
+    ErrorCode.AUTHORIZATION_ERROR.value
+)
+ERROR_CODE_FORBIDDEN = (
+    ErrorCode.AUTHORIZATION_ERROR.value
+)
+ERROR_CODE_RATE_LIMITED = (
+    ErrorCode.RATE_LIMIT_ERROR.value
+)
+ERROR_CODE_PROVIDER_ERROR = (
+    ErrorCode.PROVIDER_ERROR.value
+)
+ERROR_CODE_DATABASE_UNAVAILABLE = (
+    ErrorCode.DATABASE_UNAVAILABLE.value
+)
+
+
+__all__ = [
+    "ACCEPT_HEADER",
+    "ACCESS_TOKEN_EXPIRE_MINUTES",
+    "ADMIN_USER_ROLE",
+    "ALLOWED_HOSTS",
+    "ALLOWED_NOTIFICATION_CHANNELS",
+    "ALLOWED_RETRIEVAL_MODES",
+    "ALLOWED_RETENTION_ACTIONS",
+    "ALLOWED_SORT_DIRECTIONS",
+    "ALLOWED_UPLOAD_EXTENSIONS",
+    "API_DESCRIPTION",
+    "API_KEY_PREFIX",
+    "API_TAG_ADMIN",
+    "API_TAG_DOCUMENTS",
+    "API_TAG_INTEGRATIONS",
+    "API_TAG_NOTIFICATIONS",
+    "API_TAG_SEARCH",
+    "API_TAG_SYSTEM",
+    "API_TAG_TENANTS",
+    "API_TAG_USAGE",
+    "API_TAG_USERS",
+    "API_TAG_WEBHOOKS",
+    "API_TAG_WORKFLOWS",
+    "API_TITLE",
+    "API_V1_PREFIX",
+    "API_VERSION",
+    "ASYNC_POSTGRES_SCHEME",
+    "AUTHORIZATION_HEADER",
+    "AUTH_RATE_LIMIT_REQUESTS",
+    "AUTH_RATE_LIMIT_WINDOW_SECONDS",
+    "BEARER_TOKEN_PREFIX",
+    "CACHE_KEY_PREFIX",
+    "CONTENT_TYPE_HEADER",
+    "DAY_CACHE_TTL_SECONDS",
+    "DEFAULT_ACCOUNT_LOCKOUT_MINUTES",
+    "DEFAULT_CACHE_TTL_SECONDS",
+    "DEFAULT_COST_QUOTA",
+    "DEFAULT_DB_MAX_OVERFLOW",
+    "DEFAULT_DB_POOL_RECYCLE_SECONDS",
+    "DEFAULT_DB_POOL_SIZE",
+    "DEFAULT_DB_POOL_TIMEOUT_SECONDS",
+    "DEFAULT_DB_RETRY_DELAY_SECONDS",
+    "DEFAULT_DB_STATEMENT_TIMEOUT_SECONDS",
+    "DEFAULT_DOCUMENT_CHUNK_OVERLAP",
+    "DEFAULT_DOCUMENT_CHUNK_SIZE",
+    "DEFAULT_EMBEDDING_BATCH_SIZE",
+    "DEFAULT_EMBEDDING_DIMENSIONS",
+    "DEFAULT_EMBEDDING_MODEL",
+    "DEFAULT_EMBEDDING_QUERY_TOP_K",
+    "DEFAULT_INGESTION_BATCH_SIZE",
+    "DEFAULT_INGESTION_TIMEOUT_SECONDS",
+    "DEFAULT_INTEGRATION_STATUS",
+    "DEFAULT_INTEGRATION_TIMEOUT_SECONDS",
+    "DEFAULT_LLM_MAX_TOKENS",
+    "DEFAULT_LLM_RETRY_ATTEMPTS",
+    "DEFAULT_LLM_RETRY_BACKOFF_SECONDS",
+    "DEFAULT_LLM_TEMPERATURE",
+    "DEFAULT_LLM_TIMEOUT_SECONDS",
+    "DEFAULT_MAX_MONTHLY_API_CALLS",
+    "DEFAULT_MAX_TENANT_DOCUMENTS",
+    "DEFAULT_MAX_TENANT_STORAGE_BYTES",
+    "DEFAULT_MAX_TENANT_USERS",
+    "DEFAULT_NOTIFICATION_PRIORITY",
+    "DEFAULT_PAGE",
+    "DEFAULT_PAGE_SIZE",
+    "DEFAULT_RATE_LIMIT_REQUESTS",
+    "DEFAULT_RATE_LIMIT_WINDOW_SECONDS",
+    "DEFAULT_REQUEST_QUOTA",
+    "DEFAULT_RETENTION_BATCH_SIZE",
+    "DEFAULT_RETENTION_DAYS",
+    "DEFAULT_RETENTION_RUNTIME_MINUTES",
+    "DEFAULT_RETRIEVAL_MODE",
+    "DEFAULT_SKIP",
+    "DEFAULT_SORT_DIRECTION",
+    "DEFAULT_SYNC_BATCH_SIZE",
+    "DEFAULT_SYNC_STATUS",
+    "DEFAULT_TENANT_PLAN",
+    "DEFAULT_TOKEN_QUOTA",
+    "DEFAULT_UPLOAD_SIZE_LIMIT_MB",
+    "DEFAULT_USER_LOCALE",
+    "DEFAULT_USER_ROLE",
+    "DEFAULT_USER_TIMEZONE",
+    "DEFAULT_VECTOR_SEARCH_LIMIT",
+    "DEFAULT_WEBHOOK_MAX_ATTEMPTS",
+    "DEFAULT_WEBHOOK_RETRY_BASE_DELAY_SECONDS",
+    "DEFAULT_WEBHOOK_SIGNATURE_ALGORITHM",
+    "DEFAULT_WEBHOOK_TIMEOUT_SECONDS",
+    "DEFAULT_WORKFLOW_RETRY_DELAY_SECONDS",
+    "DEFAULT_WORKFLOW_TIMEOUT_SECONDS",
+    "DOCUMENT_CACHE_PREFIX",
+    "DOCUMENT_STATUS_ARCHIVED",
+    "DOCUMENT_STATUS_DELETED",
+    "DOCUMENT_STATUS_FAILED",
+    "DOCUMENT_STATUS_PROCESSING",
+    "DOCUMENT_STATUS_READY",
+    "DOCS_URL",
+    "EMBEDDING_CACHE_PREFIX",
+    "EMBEDDING_STATUS_FAILED",
+    "EMBEDDING_STATUS_PENDING",
+    "EMBEDDING_STATUS_PROCESSING",
+    "EMBEDDING_STATUS_READY",
+    "ENTERPRISE_TENANT_PLAN",
+    "ERROR_CODE_AUTHORIZATION",
+    "ERROR_CODE_CONFLICT",
+    "ERROR_CODE_DATABASE_UNAVAILABLE",
+    "ERROR_CODE_FORBIDDEN",
+    "ERROR_CODE_INTERNAL",
+    "ERROR_CODE_NOT_FOUND",
+    "ERROR_CODE_PROVIDER_ERROR",
+    "ERROR_CODE_RATE_LIMITED",
+    "ERROR_CODE_UNAUTHORIZED",
+    "ERROR_CODE_VALIDATION",
+    "ETAG_HEADER",
+    "FORWARDED_FOR_HEADER",
+    "HEALTH_ENDPOINT",
+    "IF_NONE_MATCH_HEADER",
+    "INGESTION_RATE_LIMIT_REQUESTS",
+    "INGESTION_RATE_LIMIT_WINDOW_SECONDS",
+    "INTEGRATION_CACHE_PREFIX",
+    "INTEGRATION_STATUS_CONNECTED",
+    "INTEGRATION_STATUS_DISCONNECTED",
+    "INTEGRATION_STATUS_ERROR",
+    "LOCATION_HEADER",
+    "LONG_CACHE_TTL_SECONDS",
+    "MAX_DB_RETRY_ATTEMPTS",
+    "MAX_DESCRIPTION_LENGTH",
+    "MAX_DOCUMENT_BATCH_SIZE",
+    "MAX_DOCUMENT_CHUNK_OVERLAP",
+    "MAX_DOCUMENT_CHUNK_SIZE",
+    "MAX_DOCUMENT_CONTENT_LENGTH",
+    "MAX_DOCUMENT_DESCRIPTION_LENGTH",
+    "MAX_DOCUMENT_TAG_LENGTH",
+    "MAX_DOCUMENT_TAGS",
+    "MAX_DOCUMENT_TITLE_LENGTH",
+    "MAX_EMBEDDING_BATCH_SIZE",
+    "MAX_EMAIL_LENGTH",
+    "MAX_ERROR_MESSAGE_LENGTH",
+    "MAX_FAILED_LOGIN_ATTEMPTS",
+    "MAX_IDENTIFIER_LENGTH",
+    "MAX_INGESTION_BATCH_SIZE",
+    "MAX_INGESTION_TIMEOUT_SECONDS",
+    "MAX_INTEGRATION_TIMEOUT_SECONDS",
+    "MAX_LOG_MESSAGE_LENGTH",
+    "MAX_LLM_MAX_TOKENS",
+    "MAX_LLM_TEMPERATURE",
+    "MAX_LLM_TIMEOUT_SECONDS",
+    "MAX_METADATA_KEYS",
+    "MAX_METADATA_VALUE_LENGTH",
+    "MAX_NAME_LENGTH",
+    "MAX_PASSWORD_LENGTH",
+    "MAX_PERMISSION_LENGTH",
+    "MAX_PERMISSIONS",
+    "MAX_PAGE_SIZE",
+    "MAX_RETENTION_BATCH_SIZE",
+    "MAX_RETENTION_DAYS",
+    "MAX_RETENTION_RUNTIME_MINUTES",
+    "MAX_SKIP",
+    "MAX_SLUG_LENGTH",
+    "MAX_SYNC_BATCH_SIZE",
+    "MAX_TOKEN_EXPIRE_MINUTES",
+    "MAX_UPLOAD_SIZE_LIMIT_MB",
+    "MAX_URL_LENGTH",
+    "MAX_VECTOR_SEARCH_LIMIT",
+    "MAX_VECTOR_SIMILARITY_SCORE",
+    "MAX_WEBHOOK_MAX_ATTEMPTS",
+    "MAX_WEBHOOK_RETRY_BASE_DELAY_SECONDS",
+    "MAX_WEBHOOK_TIMEOUT_SECONDS",
+    "MAX_WORKFLOW_LOG_ENTRIES",
+    "MAX_WORKFLOW_RETRY_ATTEMPTS",
+    "MAX_WORKFLOW_REQUIREMENTS",
+    "MAX_WORKFLOW_TIMEOUT_SECONDS",
+    "MCP_DEFAULT_TIMEOUT_SECONDS",
+    "MCP_MAX_TIMEOUT_SECONDS",
+    "MCP_PROTOCOL_VERSION",
+    "MCP_SERVER_NAME",
+    "MCP_SERVER_VERSION",
+    "MCP_TOOL_NAMESPACE",
+    "MEMBER_USER_ROLE",
+    "METRICS_ENDPOINT",
+    "MILLISECONDS_PER_SECOND",
+    "MIN_PASSWORD_LENGTH",
+    "MIN_PAGE_SIZE",
+    "MIN_RETENTION_DAYS",
+    "MIN_VECTOR_SIMILARITY_SCORE",
+    "NOTIFICATION_CHANNEL_EMAIL",
+    "NOTIFICATION_CHANNEL_IN_APP",
+    "NOTIFICATION_CHANNEL_PUSH",
+    "NOTIFICATION_CHANNEL_SMS",
+    "NOTIFICATION_CHANNEL_WEBHOOK",
+    "NOTIFICATION_STATUS_ARCHIVED",
+    "NOTIFICATION_STATUS_READ",
+    "NOTIFICATION_STATUS_UNREAD",
+    "OPENAPI_URL",
+    "OWNER_USER_ROLE",
+    "PASSWORD_RESET_TOKEN_EXPIRE_MINUTES",
+    "PROCESS_TIME_HEADER",
+    "PRODUCTION_SECURITY_HEADERS",
+    "RATE_LIMIT_CACHE_PREFIX",
+    "RATE_LIMIT_LIMIT_HEADER",
+    "RATE_LIMIT_REMAINING_HEADER",
+    "RATE_LIMIT_RESET_HEADER",
+    "REAL_IP_HEADER",
+    "REDOC_URL",
+    "REQUEST_ID_HEADER",
+    "RETRY_AFTER_HEADER",
+    "RETENTION_ACTION_ANONYMIZE",
+    "RETENTION_ACTION_ARCHIVE",
+    "RETENTION_ACTION_DELETE",
+    "SEARCH_RATE_LIMIT_REQUESTS",
+    "SEARCH_RATE_LIMIT_WINDOW_SECONDS",
+    "SECONDS_PER_DAY",
+    "SECONDS_PER_HOUR",
+    "SECONDS_PER_MINUTE",
+    "SECURITY_HEADERS",
+    "SHORT_CACHE_TTL_SECONDS",
+    "SUPPORTED_UPLOAD_EXTENSIONS",
+    "SYNC_STATUS_COMPLETED",
+    "SYNC_STATUS_FAILED",
+    "SYNC_STATUS_IDLE",
+    "SYNC_STATUS_QUEUED",
+    "SYNC_STATUS_RUNNING",
+    "TENANT_CACHE_PREFIX",
+    "TENANT_STATUS_ACTIVE",
+    "TENANT_STATUS_DELETED",
+    "TENANT_STATUS_SUSPENDED",
+    "TERMINAL_WORKFLOW_STATUSES",
+    "TOKENS_PER_MILLION",
+    "TRIAL_TENANT_PLAN",
+    "USAGE_TYPE_API_CALLS",
+    "USAGE_TYPE_DOCUMENTS",
+    "USAGE_TYPE_EMBEDDING_TOKENS",
+    "USAGE_TYPE_LLM_TOKENS",
+    "USAGE_TYPE_STORAGE_BYTES",
+    "USAGE_TYPE_WORKFLOW_EXECUTIONS",
+    "USER_AGENT_HEADER",
+    "USER_CACHE_PREFIX",
+    "VIEWER_USER_ROLE",
+    "WEBHOOK_CACHE_PREFIX",
+    "WEBHOOK_DELIVERY_DEAD_LETTERED",
+    "WEBHOOK_DELIVERY_DELIVERED",
+    "WEBHOOK_DELIVERY_FAILED",
+    "WEBHOOK_DELIVERY_PENDING",
+    "WEBHOOK_EVENT_DEAD_LETTERED",
+    "WEBHOOK_EVENT_IGNORED",
+    "WEBHOOK_EVENT_PROCESSED",
+    "WEBHOOK_EVENT_PROCESSING",
+    "WEBHOOK_EVENT_RECEIVED",
+    "WEBHOOK_RATE_LIMIT_REQUESTS",
+    "WEBHOOK_RATE_LIMIT_WINDOW_SECONDS",
+    "WORKFLOW_CACHE_PREFIX",
+    "WORKFLOW_RATE_LIMIT_REQUESTS",
+    "WORKFLOW_RATE_LIMIT_WINDOW_SECONDS",
+    "WORKFLOW_STATUS_CANCELLED",
+    "WORKFLOW_STATUS_COMPLETED",
+    "WORKFLOW_STATUS_FAILED",
+    "WORKFLOW_STATUS_PENDING",
+    "WORKFLOW_STATUS_RUNNING",
+    "WORKFLOW_STATUS_WAITING_APPROVAL",
+]

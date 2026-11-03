@@ -1,121 +1,245 @@
+"""
+LangGraph ingestion node.
+
+This node prepares workflow context by loading document summaries and relevant
+retrieval context. It is intentionally defensive: ingestion failures should be
+recorded in workflow state rather than crashing the graph.
+"""
+
+from __future__ import annotations
+
 import logging
-import time
-from typing import Dict, Any, List
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
-from app.graph.state import AgenticState
-from app.services.llm_client import LLMProviderFactory
+from typing import Any
 
-logger = logging.getLogger("agentic_bridge.graph.ingestion_node")
+from app.core.enums import (
+    JobStatus,
+    WorkflowStep,
+)
+from app.services.document_service import (
+    get_document_summary_for_workflow,
+)
 
-class ExtractedRequirementsSchema(BaseModel):
-    """
-    Pydantic schema enforcing strict structure for requirements 
-    extracted from unstructured product briefs.
-    """
-    summary: str = Field(description="A concise executive summary of the project brief.")
-    core_features: List[str] = Field(description="List of primary functional requirements and user stories.")
-    technical_constraints: List[str] = Field(description="Identified tech stack requirements, performance metrics, or security constraints.")
-    risk_assessment: str = Field(description="Potential architectural or implementation risks identified in the brief.")
 
-def ingestion_node(state: AgenticState) -> Dict[str, Any]:
+logger = logging.getLogger(
+    "agentic_bridge.graph.nodes.ingestion",
+)
+
+
+MAX_DOCUMENT_IDS = 25
+MAX_SUMMARY_CHARS = 8_000
+MAX_RETRIEVAL_MATCHES = 20
+
+
+async def ingestion_node(
+    state: dict[str, Any],
+) -> dict[str, Any]:
     """
-    Production-grade LangGraph node responsible for ingesting, parsing, 
-    and structuring raw product briefs using enterprise LLMs with retry hardening and telemetry.
-    
+    Prepare ingestion context for the workflow.
+
     Args:
-        state (AgenticState): Current graph execution state dictionary.
-        
+        state: Current LangGraph workflow state.
+
     Returns:
-        Dict[str, Any]: State updates containing extracted requirements, design tokens, and execution logs.
+        A partial state update containing ingestion status, document summaries,
+        retrieval context, and error information.
     """
-    execution_id = state.get("execution_id", "unknown-execution")
-    brief_id = state.get("brief_id", "unknown-brief")
-    raw_brief_text = state.get("raw_brief_text", "")
+    execution_id = state.get("execution_id")
+    tenant_id = state.get("tenant_id")
+    document_ids = state.get("document_ids") or []
 
-    logger.info(f"[{execution_id}] Starting ingestion node processing for brief ID: {brief_id}")
+    logger.info(
+        "ingestion_node_started",
+        extra={
+            "execution_id": execution_id,
+            "tenant_id": tenant_id,
+            "document_count": len(document_ids),
+        },
+    )
 
-    if not raw_brief_text or not raw_brief_text.strip():
-        error_msg = f"[{execution_id}] Ingestion failed: Raw brief text is empty or missing for brief ID {brief_id}."
-        logger.error(error_msg)
-        return {
-            "current_error": error_msg,
-            "execution_logs": [f"ERROR: {error_msg}"]
-        }
-
-    start_time = time.time()
-    max_retries = 2
-    attempt = 0
-    parsed_output = None
-
-    try:
-        while attempt <= max_retries:
-            try:
-                attempt += 1
-                # Instantiate LLM via our multi-provider factory pattern
-                llm = LLMProviderFactory.get_llm(temperature=0.1)
-                
-                # Setup Pydantic output parser for reliable JSON schema validation
-                parser = PydanticOutputParser(pydantic_object=ExtractedRequirementsSchema)
-                
-                # Construct enterprise prompt template
-                prompt_template = ChatPromptTemplate.from_messages([
-                    (
-                        "system",
-                        "You are a Principal Enterprise Systems Architect and Senior Technical Product Manager. "
-                        "Analyze the provided product brief and extract structured requirements, core features, "
-                        "technical constraints, and architectural risks.\n{format_instructions}"
-                    ),
-                    (
-                        "human",
-                        "Here is the product brief to analyze:\n\n{raw_brief}"
-                    )
-                ])
-                
-                # Format prompt with parser instructions
-                prompt = prompt_template.format_messages(
-                    format_instructions=parser.get_format_instructions(),
-                    raw_brief=raw_brief_text
-                )
-
-                logger.debug(f"[{execution_id}] Dispatching prompt to LLM provider (Attempt {attempt}/{max_retries + 1})...")
-                
-                # Execute model call
-                response = llm.invoke(prompt)
-                
-                # Parse and validate structured output against Pydantic schema
-                parsed_output = parser.parse(response.content)
-                break  # Success, exit retry loop
-
-            except Exception as inner_e:
-                logger.warning(f"[{execution_id}] Attempt {attempt} failed: {str(inner_e)}")
-                if attempt > max_retries:
-                    raise inner_e
-                time.sleep(1.5 * attempt)  # Exponential backoff delay
-
-        duration = round(time.time() - start_time, 2)
-        logger.info(f"[{execution_id}] Successfully extracted {len(parsed_output.core_features)} core requirements in {duration}s.")
-
-        # Compile comprehensive state update
-        return {
-            "extracted_requirements": parsed_output.core_features,
-            "design_tokens": {
-                "summary": parsed_output.summary,
-                "technical_constraints": parsed_output.technical_constraints,
-                "risk_assessment": parsed_output.risk_assessment,
-                "ingestion_duration_seconds": duration
+    if not document_ids:
+        logger.warning(
+            "ingestion_node_no_documents",
+            extra={
+                "execution_id": execution_id,
+                "tenant_id": tenant_id,
             },
+        )
+
+        return {
+            "current_step": WorkflowStep.INGESTION,
+            "job_status": JobStatus.COMPLETED,
+            "document_summaries": [],
+            "retrieval_matches": [],
+            "ingestion_completed": True,
+            "recoverable_error": False,
             "current_error": None,
-            "execution_logs": [
-                f"SUCCESS: Ingestion node completed for brief {brief_id} in {duration}s. Extracted {len(parsed_output.core_features)} requirements."
-            ]
         }
 
-    except Exception as e:
-        error_msg = f"[{execution_id}] Critical exception in ingestion node: {str(e)}"
-        logger.exception(error_msg)
-        return {
-            "current_error": error_msg,
-            "execution_logs": [f"ERROR: {error_msg}"]
+    if len(document_ids) > MAX_DOCUMENT_IDS:
+        document_ids = document_ids[
+            :MAX_DOCUMENT_IDS
+        ]
+
+        logger.warning(
+            "ingestion_node_document_ids_truncated",
+            extra={
+                "execution_id": execution_id,
+                "tenant_id": tenant_id,
+                "max_document_ids": (
+                    MAX_DOCUMENT_IDS
+                ),
+            },
+        )
+
+    document_summaries: list[dict[str, Any]] = []
+    retrieval_matches: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    for document_id in document_ids:
+        try:
+            summary = (
+                await get_document_summary_for_workflow(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    execution_id=execution_id,
+                )
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "ingestion_node_document_failed",
+                extra={
+                    "execution_id": execution_id,
+                    "tenant_id": tenant_id,
+                    "document_id": str(
+                        document_id,
+                    ),
+                },
+            )
+
+            errors.append(
+                f"Document {document_id} could "
+                "not be ingested.",
+            )
+
+            continue
+
+        if not summary:
+            errors.append(
+                f"Document {document_id} returned "
+                "no ingestion summary.",
+            )
+
+            continue
+
+        normalized_summary = {
+            "document_id": str(
+                summary.get("document_id", document_id),
+            ),
+            "title": summary.get("title"),
+            "summary": str(
+                summary.get("summary", ""),
+            )[:MAX_SUMMARY_CHARS],
+            "source": summary.get("source"),
+            "document_type": summary.get(
+                "document_type",
+            ),
+            "metadata": summary.get(
+                "metadata",
+                {},
+            ),
         }
+
+        document_summaries.append(
+            normalized_summary,
+        )
+
+        matches = summary.get(
+            "retrieval_matches",
+            [],
+        )
+
+        if isinstance(matches, list):
+            retrieval_matches.extend(
+                matches[:MAX_RETRIEVAL_MATCHES],
+            )
+
+    if errors and not document_summaries:
+        logger.error(
+            "ingestion_node_failed",
+            extra={
+                "execution_id": execution_id,
+                "tenant_id": tenant_id,
+                "error_count": len(errors),
+            },
+        )
+
+        return {
+            "current_step": WorkflowStep.INGESTION,
+            "job_status": JobStatus.FAILED,
+            "document_summaries": [],
+            "retrieval_matches": [],
+            "ingestion_completed": False,
+            "recoverable_error": True,
+            "current_error": (
+                "No documents could be ingested."
+            ),
+            "ingestion_errors": errors,
+        }
+
+    if errors:
+        logger.warning(
+            "ingestion_node_partially_completed",
+            extra={
+                "execution_id": execution_id,
+                "tenant_id": tenant_id,
+                "successful_documents": len(
+                    document_summaries,
+                ),
+                "failed_documents": len(errors),
+            },
+        )
+
+        return {
+            "current_step": WorkflowStep.INGESTION,
+            "job_status": (
+                JobStatus.PARTIALLY_COMPLETED
+            ),
+            "document_summaries": (
+                document_summaries
+            ),
+            "retrieval_matches": retrieval_matches,
+            "ingestion_completed": True,
+            "recoverable_error": False,
+            "current_error": None,
+            "ingestion_errors": errors,
+        }
+
+    logger.info(
+        "ingestion_node_completed",
+        extra={
+            "execution_id": execution_id,
+            "tenant_id": tenant_id,
+            "document_count": len(
+                document_summaries,
+            ),
+            "retrieval_match_count": len(
+                retrieval_matches,
+            ),
+        },
+    )
+
+    return {
+        "current_step": WorkflowStep.INGESTION,
+        "job_status": JobStatus.COMPLETED,
+        "document_summaries": document_summaries,
+        "retrieval_matches": retrieval_matches,
+        "ingestion_completed": True,
+        "recoverable_error": False,
+        "current_error": None,
+    }
+
+
+__all__ = [
+    "ingestion_node",
+]

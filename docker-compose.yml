@@ -1,22 +1,30 @@
-version: '3.8'
+name: agentic-bridge-mcp
 
 services:
   db:
     image: pgvector/pgvector:pg17
     container_name: agentic_bridge_db
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: agentic_bridge
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
       POSTGRES_DB: agentic_bridge
+    secrets:
+      - POSTGRES_PASSWORD
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d agentic_bridge"]
-      interval: 5s
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U agentic_bridge -d agentic_bridge",
+        ]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - agentic_net
 
@@ -25,17 +33,44 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: agentic_bridge_backend
+    restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - ./backend/.env
+    environment:
+      APP_ENV: development
+      POSTGRES_SERVER: db
+      POSTGRES_USER: agentic_bridge
+      POSTGRES_DB: agentic_bridge
+      POSTGRES_PORT: "5432"
+      # Do not set DATABASE_URL here; the backend builds it from the
+      # POSTGRES_* variables and mounted POSTGRES_PASSWORD secret.
+    secrets:
+      - JWT_SECRET_KEY
+      - POSTGRES_PASSWORD
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - FIGMA_ACCESS_TOKEN
+      - WORDPRESS_APPLICATION_PASSWORD
     volumes:
       - ./backend:/app
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/agentic_bridge
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - agentic_net
 
@@ -44,18 +79,34 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: agentic_bridge_frontend
+    restart: unless-stopped
     command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_API_URL: http://localhost:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules
-    environment:
-      - VITE_API_URL=http://localhost:8000
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
     networks:
       - agentic_net
+
+secrets:
+  JWT_SECRET_KEY:
+    file: ./secrets/JWT_SECRET_KEY.txt
+  POSTGRES_PASSWORD:
+    file: ./secrets/POSTGRES_PASSWORD.txt
+  OPENAI_API_KEY:
+    file: ./secrets/OPENAI_API_KEY.txt
+  ANTHROPIC_API_KEY:
+    file: ./secrets/ANTHROPIC_API_KEY.txt
+  FIGMA_ACCESS_TOKEN:
+    file: ./secrets/FIGMA_ACCESS_TOKEN.txt
+  WORDPRESS_APPLICATION_PASSWORD:
+    file: ./secrets/WORDPRESS_APPLICATION_PASSWORD.txt
 
 volumes:
   postgres_data:
